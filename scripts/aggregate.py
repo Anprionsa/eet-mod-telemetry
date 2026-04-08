@@ -1,0 +1,311 @@
+#!/usr/bin/env python3
+"""
+Aggregate install reports from GitHub Issues into static JSON.
+
+Reads all open issues labeled 'install-report', validates them,
+computes per-component stats and pair co-failure data, then outputs
+data/aggregate.json. Processed issues are closed with a comment.
+
+Usage: python scripts/aggregate.py
+Requires: GITHUB_TOKEN env var, requests library
+"""
+
+import json
+import os
+import re
+import sys
+from collections import defaultdict
+from datetime import datetime, timezone
+
+import requests
+
+REPO = "Anprionsa/eet-mod-telemetry"
+API = "https://api.github.com"
+MIN_REPORTS = 5  # Minimum reports before publishing per-component stats
+MIN_CO_INSTALLS = 5  # Minimum co-installs for pair failure data
+MIN_CORRELATION = 0.2  # Minimum co-failure correlation to publish
+
+token = os.environ.get("GITHUB_TOKEN")
+if not token:
+    print("ERROR: GITHUB_TOKEN not set")
+    sys.exit(1)
+
+headers = {
+    "Authorization": f"token {token}",
+    "Accept": "application/vnd.github.v3+json",
+}
+
+
+def fetch_issues(label: str, state: str = "open") -> list[dict]:
+    """Fetch all issues with a given label, handling pagination."""
+    issues = []
+    page = 1
+    while True:
+        resp = requests.get(
+            f"{API}/repos/{REPO}/issues",
+            headers=headers,
+            params={"labels": label, "state": state, "per_page": 100, "page": page},
+        )
+        resp.raise_for_status()
+        batch = resp.json()
+        if not batch:
+            break
+        issues.extend(batch)
+        page += 1
+    return issues
+
+
+def extract_json_from_body(body: str) -> dict | None:
+    """Extract JSON from a markdown code block in an issue body."""
+    if not body:
+        return None
+    match = re.search(r"```json\s*\n(.*?)\n\s*```", body, re.DOTALL)
+    if not match:
+        return None
+    try:
+        return json.loads(match.group(1))
+    except (json.JSONDecodeError, ValueError):
+        return None
+
+
+def validate_report(data: dict) -> bool:
+    """Basic schema validation for an install report."""
+    if not isinstance(data, dict):
+        return False
+    if data.get("schema") != 1:
+        return False
+    if not isinstance(data.get("components"), list):
+        return False
+    if not isinstance(data.get("totalComponents"), int):
+        return False
+    if data.get("os") not in ("windows", "linux", "macos"):
+        return False
+    # Check for path separators in string fields (privacy check)
+    for key in ("weiduVersion", "runnerVersion", "forgeDataDate", "id"):
+        val = data.get(key, "")
+        if isinstance(val, str) and ("\\" in val or "/" in val):
+            return False
+    return True
+
+
+def validate_component(comp: dict) -> bool:
+    """Validate a single component outcome."""
+    return (
+        isinstance(comp.get("cn"), int)
+        and isinstance(comp.get("tp2"), str)
+        and comp.get("outcome") in ("ok", "err", "skip", "crash")
+    )
+
+
+def close_issue(issue_number: int, comment: str):
+    """Close an issue with a comment."""
+    # Add comment
+    requests.post(
+        f"{API}/repos/{REPO}/issues/{issue_number}/comments",
+        headers=headers,
+        json={"body": comment},
+    )
+    # Close issue
+    requests.patch(
+        f"{API}/repos/{REPO}/issues/{issue_number}",
+        headers=headers,
+        json={"state": "closed"},
+    )
+
+
+def aggregate_reports():
+    """Main aggregation pipeline."""
+    print("Fetching install-report issues...")
+    issues = fetch_issues("install-report", state="open")
+    print(f"Found {len(issues)} open install-report issues")
+
+    reports = []
+    invalid_issues = []
+
+    for issue in issues:
+        # Skip pull requests
+        if "pull_request" in issue:
+            continue
+        data = extract_json_from_body(issue.get("body", ""))
+        if data and validate_report(data):
+            reports.append({"data": data, "issue": issue["number"]})
+        else:
+            invalid_issues.append(issue["number"])
+
+    print(f"Valid reports: {len(reports)}, Invalid: {len(invalid_issues)}")
+
+    # Load existing aggregate to merge with
+    existing = {}
+    agg_path = os.path.join(os.path.dirname(__file__), "..", "data", "aggregate.json")
+    if os.path.exists(agg_path):
+        with open(agg_path, "r") as f:
+            existing = json.load(f)
+
+    # Merge existing component stats
+    comp_stats = defaultdict(lambda: {"installs": 0, "ok": 0, "err": 0, "skip": 0, "crash": 0, "errors": defaultdict(int)})
+    for key, stats in existing.get("componentStats", {}).items():
+        cs = comp_stats[key]
+        cs["installs"] = stats.get("installs", 0)
+        cs["ok"] = stats.get("ok", 0)
+        cs["err"] = stats.get("err", 0)
+        cs["skip"] = stats.get("skip", 0)
+        cs["crash"] = stats.get("crash", 0)
+        for err in stats.get("topErrors", []):
+            cs["errors"][err] += 1
+
+    # Track mod pairs for co-failure analysis
+    pair_data = defaultdict(lambda: {"coInstalls": 0, "coFailures": 0})
+    for key, pd in existing.get("pairFailures", []):
+        pk = f"{pd['modA']}-{pd['modB']}"
+        pair_data[pk]["coInstalls"] = pd.get("coInstalls", 0)
+        pair_data[pk]["coFailures"] = pd.get("coFailures", 0)
+
+    # Preset popularity
+    preset_counts = defaultdict(int)
+    for ps in existing.get("popularSelections", []):
+        preset_counts[ps.get("presetId") or "custom"] = ps.get("count", 0)
+
+    # Engine limit samples
+    kit_samples = []
+    splstate_samples = []
+
+    existing_report_count = existing.get("reportCount", 0)
+
+    # Process new reports
+    for report_entry in reports:
+        data = report_entry["data"]
+        components = [c for c in data.get("components", []) if validate_component(c)]
+
+        # Per-component stats
+        for comp in components:
+            key = f"{comp['modId']}-{comp['ci']}"
+            if comp["modId"] == -1:
+                continue  # Skip unmatched components
+            cs = comp_stats[key]
+            cs["installs"] += 1
+            outcome = comp["outcome"]
+            if outcome in cs:
+                cs[outcome] += 1
+            if comp.get("errorPattern"):
+                cs["errors"][comp["errorPattern"]] += 1
+
+        # Pair co-failure: find all mods with errors
+        failed_mods = set()
+        installed_mods = set()
+        for comp in components:
+            if comp["modId"] == -1:
+                continue
+            installed_mods.add(comp["modId"])
+            if comp["outcome"] in ("err", "crash"):
+                failed_mods.add(comp["modId"])
+
+        # For every pair of installed mods where at least one failed
+        for mod_a in installed_mods:
+            for mod_b in installed_mods:
+                if mod_a >= mod_b:
+                    continue
+                pk = f"{mod_a}-{mod_b}"
+                pair_data[pk]["coInstalls"] += 1
+                if mod_a in failed_mods or mod_b in failed_mods:
+                    pair_data[pk]["coFailures"] += 1
+
+        # Preset tracking
+        preset_id = data.get("presetId") or "custom"
+        preset_counts[preset_id] += 1
+
+        # Engine limits
+        limits = data.get("engineLimits")
+        if limits and isinstance(limits, dict):
+            if "kits" in limits:
+                kit_samples.append(limits["kits"])
+            if "splstates" in limits:
+                splstate_samples.append(limits["splstates"])
+
+    # Build output
+    output_comp_stats = {}
+    for key, cs in comp_stats.items():
+        if cs["installs"] < MIN_REPORTS:
+            continue
+        top_errors = sorted(cs["errors"].items(), key=lambda x: -x[1])[:3]
+        output_comp_stats[key] = {
+            "installs": cs["installs"],
+            "ok": cs["ok"],
+            "err": cs["err"],
+            "skip": cs["skip"],
+            "crash": cs["crash"],
+            "failRate": round(cs["err"] / cs["installs"], 3) if cs["installs"] > 0 else 0,
+            "topErrors": [e[0] for e in top_errors],
+        }
+
+    output_pairs = []
+    for pk, pd in pair_data.items():
+        if pd["coInstalls"] < MIN_CO_INSTALLS:
+            continue
+        correlation = pd["coFailures"] / pd["coInstalls"] if pd["coInstalls"] > 0 else 0
+        if correlation < MIN_CORRELATION:
+            continue
+        mod_a, mod_b = pk.split("-")
+        output_pairs.append({
+            "modA": int(mod_a),
+            "modB": int(mod_b),
+            "coInstalls": pd["coInstalls"],
+            "coFailures": pd["coFailures"],
+            "correlation": round(correlation, 3),
+        })
+    output_pairs.sort(key=lambda x: -x["correlation"])
+
+    def percentiles(samples):
+        if not samples:
+            return {"p50": 0, "p90": 0, "p99": 0, "max": 0}
+        s = sorted(samples)
+        n = len(s)
+        return {
+            "p50": s[n // 2],
+            "p90": s[int(n * 0.9)],
+            "p99": s[int(n * 0.99)],
+            "max": s[-1],
+        }
+
+    output = {
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "reportCount": existing_report_count + len(reports),
+        "componentStats": output_comp_stats,
+        "pairFailures": output_pairs,
+        "popularSelections": [
+            {"presetId": k if k != "custom" else None, "count": v}
+            for k, v in sorted(preset_counts.items(), key=lambda x: -x[1])
+        ],
+        "engineLimits": {
+            "kits": percentiles(kit_samples),
+            "splstates": percentiles(splstate_samples),
+        },
+    }
+
+    # Write output
+    os.makedirs(os.path.dirname(agg_path), exist_ok=True)
+    with open(agg_path, "w") as f:
+        json.dump(output, f, indent=2)
+    print(f"Wrote aggregate.json: {len(output_comp_stats)} components, {len(output_pairs)} pairs")
+
+    # Close processed issues
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    for report_entry in reports:
+        close_issue(
+            report_entry["issue"],
+            f"Included in aggregation run {now}. Thank you for contributing!"
+        )
+    print(f"Closed {len(reports)} processed issues")
+
+    # Close invalid issues with explanation
+    for issue_num in invalid_issues:
+        close_issue(
+            issue_num,
+            "This issue could not be parsed as a valid install report (schema validation failed). "
+            "Please submit reports via EET Mod Runner's 'Share Report on GitHub' button."
+        )
+    if invalid_issues:
+        print(f"Closed {len(invalid_issues)} invalid issues")
+
+
+if __name__ == "__main__":
+    aggregate_reports()

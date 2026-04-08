@@ -1,0 +1,33 @@
+name: Aggregate Telemetry
+
+on:
+  schedule:
+    - cron: '17 6 * * 1'  # Weekly Monday 6:17 AM UTC (offset from :00)
+  workflow_dispatch: {}
+
+jobs:
+  aggregate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - run: pip install requests
+
+      - name: Run aggregation
+        run: python scripts/aggregate.py
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/
+          git diff --cached --quiet || (git commit -m "Aggregation $(date -u +%Y-%m-%d)" && git push)

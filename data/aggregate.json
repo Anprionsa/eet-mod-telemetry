@@ -1,0 +1,11 @@
+{
+  "generatedAt": null,
+  "reportCount": 0,
+  "componentStats": {},
+  "pairFailures": [],
+  "popularSelections": [],
+  "engineLimits": {
+    "kits": { "p50": 0, "p90": 0, "p99": 0, "max": 0 },
+    "splstates": { "p50": 0, "p90": 0, "p99": 0, "max": 0 }
+  }
+}
