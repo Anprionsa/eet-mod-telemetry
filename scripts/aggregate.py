@@ -348,11 +348,20 @@ def aggregate_builds():
 
     builds.sort(key=lambda b: b.get("createdAt", ""), reverse=True)
 
-    builds_path = os.path.join(os.path.dirname(__file__), "..", "data", "builds.json")
-    os.makedirs(os.path.dirname(builds_path), exist_ok=True)
-    with open(builds_path, "w") as f:
-        json.dump(builds, f, indent=2)
-    print(f"Wrote builds.json: {len(builds)} approved builds")
+    builds_dir = os.path.join(os.path.dirname(__file__), "..", "data", "builds")
+    os.makedirs(builds_dir, exist_ok=True)
+
+    # Write individual build files and build index
+    index = []
+    for build in builds:
+        bid = build["id"]
+        with open(os.path.join(builds_dir, f"{bid}.json"), "w") as f:
+            json.dump(build, f, indent=2)
+        index.append({k: v for k, v in build.items() if k != "keys"})
+
+    with open(os.path.join(builds_dir, "_index.json"), "w") as f:
+        json.dump(index, f, indent=2)
+    print(f"Wrote {len(builds)} build files + _index.json")
 
 
 if __name__ == "__main__":
