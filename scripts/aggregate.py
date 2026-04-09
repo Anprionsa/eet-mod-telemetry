@@ -99,18 +99,19 @@ def validate_component(comp: dict) -> bool:
 
 def close_issue(issue_number: int, comment: str):
     """Close an issue with a comment."""
-    # Add comment
-    requests.post(
-        f"{API}/repos/{REPO}/issues/{issue_number}/comments",
-        headers=headers,
-        json={"body": comment},
-    )
-    # Close issue
-    requests.patch(
-        f"{API}/repos/{REPO}/issues/{issue_number}",
-        headers=headers,
-        json={"state": "closed"},
-    )
+    try:
+        requests.post(
+            f"{API}/repos/{REPO}/issues/{issue_number}/comments",
+            headers=headers,
+            json={"body": comment},
+        ).raise_for_status()
+        requests.patch(
+            f"{API}/repos/{REPO}/issues/{issue_number}",
+            headers=headers,
+            json={"state": "closed"},
+        ).raise_for_status()
+    except requests.RequestException as e:
+        print(f"Warning: Failed to close issue #{issue_number}: {e}")
 
 
 def aggregate_reports():
@@ -155,7 +156,7 @@ def aggregate_reports():
 
     # Track mod pairs for co-failure analysis
     pair_data = defaultdict(lambda: {"coInstalls": 0, "coFailures": 0})
-    for key, pd in existing.get("pairFailures", []):
+    for pd in existing.get("pairFailures", []):
         pk = f"{pd['modA']}-{pd['modB']}"
         pair_data[pk]["coInstalls"] = pd.get("coInstalls", 0)
         pair_data[pk]["coFailures"] = pd.get("coFailures", 0)
@@ -307,5 +308,53 @@ def aggregate_reports():
         print(f"Closed {len(invalid_issues)} invalid issues")
 
 
+def aggregate_builds():
+    """Process approved community builds into data/builds.json."""
+    print("Fetching approved community-build issues...")
+    # Fetch issues with BOTH labels: community-build AND approved
+    all_build_issues = fetch_issues("community-build", state="all")
+    approved = [
+        issue for issue in all_build_issues
+        if any(label.get("name") == "approved" for label in issue.get("labels", []))
+        and "pull_request" not in issue
+    ]
+    print(f"Found {len(approved)} approved community builds")
+
+    builds = []
+    for issue in approved:
+        data = extract_json_from_body(issue.get("body", ""))
+        if not data or data.get("schema") != 1:
+            continue
+        if not isinstance(data.get("keys"), list) or not data.get("name"):
+            continue
+        # Sanitize: ensure no unexpected fields leak through
+        builds.append({
+            "id": data.get("id", f"issue-{issue['number']}"),
+            "name": data["name"],
+            "desc": data.get("desc", ""),
+            "author": data.get("author", "Anonymous"),
+            "icon": data.get("icon", ""),
+            "color": data.get("color", "#a78bfa"),
+            "keys": data["keys"],
+            "tier": data.get("tier"),
+            "difficulty": data.get("difficulty"),
+            "focus": data.get("focus", []),
+            "modCount": data.get("modCount", len(set(k.split("-")[0] for k in data["keys"] if "-" in k))),
+            "componentCount": data.get("componentCount", len(data["keys"])),
+            "forgeVersion": data.get("forgeVersion", "unknown"),
+            "createdAt": data.get("createdAt", issue.get("created_at", "")),
+            "issueNumber": issue["number"],
+        })
+
+    builds.sort(key=lambda b: b.get("createdAt", ""), reverse=True)
+
+    builds_path = os.path.join(os.path.dirname(__file__), "..", "data", "builds.json")
+    os.makedirs(os.path.dirname(builds_path), exist_ok=True)
+    with open(builds_path, "w") as f:
+        json.dump(builds, f, indent=2)
+    print(f"Wrote builds.json: {len(builds)} approved builds")
+
+
 if __name__ == "__main__":
     aggregate_reports()
+    aggregate_builds()
