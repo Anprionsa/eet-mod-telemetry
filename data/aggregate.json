@@ -1,11 +1,21 @@
 {
-  "generatedAt": null,
+  "generatedAt": "2026-04-13T08:24:34.713498+00:00",
   "reportCount": 0,
   "componentStats": {},
   "pairFailures": [],
   "popularSelections": [],
   "engineLimits": {
-    "kits": { "p50": 0, "p90": 0, "p99": 0, "max": 0 },
-    "splstates": { "p50": 0, "p90": 0, "p99": 0, "max": 0 }
+    "kits": {
+      "p50": 0,
+      "p90": 0,
+      "p99": 0,
+      "max": 0
+    },
+    "splstates": {
+      "p50": 0,
+      "p90": 0,
+      "p99": 0,
+      "max": 0
+    }
   }
 }
