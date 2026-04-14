@@ -351,17 +351,35 @@ def aggregate_builds():
     builds_dir = os.path.join(os.path.dirname(__file__), "..", "data", "builds")
     os.makedirs(builds_dir, exist_ok=True)
 
-    # Write individual build files and build index
-    index = []
+    # Write individual build files for each approved issue-derived build
+    issue_ids = set()
     for build in builds:
         bid = build["id"]
+        issue_ids.add(bid)
         with open(os.path.join(builds_dir, f"{bid}.json"), "w") as f:
             json.dump(build, f, indent=2)
+
+    # Build index from ALL build files on disk (issue-derived + seeded).
+    # This preserves hand-curated seed builds (mod-forge-ultimate, xplat-story, etc.)
+    # that aren't backed by a GitHub issue.
+    index = []
+    for fname in sorted(os.listdir(builds_dir)):
+        if not fname.endswith(".json") or fname.startswith("_"):
+            continue
+        try:
+            with open(os.path.join(builds_dir, fname), "r") as f:
+                build = json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"WARN: skipped malformed build file {fname}: {e}")
+            continue
         index.append({k: v for k, v in build.items() if k != "keys"})
+
+    # Preserve newest-first order: sort by createdAt desc (matches the pre-split behavior).
+    index.sort(key=lambda b: b.get("createdAt", ""), reverse=True)
 
     with open(os.path.join(builds_dir, "_index.json"), "w") as f:
         json.dump(index, f, indent=2)
-    print(f"Wrote {len(builds)} build files + _index.json")
+    print(f"Wrote {len(builds)} issue-derived build files; _index.json lists {len(index)} total builds ({len(index) - len(issue_ids)} seeded)")
 
 
 if __name__ == "__main__":
