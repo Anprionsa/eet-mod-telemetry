@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# Claude Code
+.claude/
+
+# Local scratch / preview snapshots (not consumed by aggregation)
+ult_prev.json

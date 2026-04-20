@@ -1,10 +1,12 @@
-# EET Mod Telemetry
+# Infinity Mod Telemetry
 
-Crowdsourced install data for [EET Mod Forge](https://github.com/Anprionsa/eet-mod-forge) and [EET Mod Runner](https://github.com/Anprionsa/eet-mod-runner).
+> **Renamed from EET Mod Telemetry.** The suite was renamed from "EET" to "Infinity" to reflect support for the broader Infinity Engine game family, not just EET installs. The EET *mod* (EET.tp2) is unrelated to this rename.
+
+Crowdsourced install data for [Infinity Mod Forge](https://github.com/Anprionsa/infinity-mod-forge) and [Infinity Mod Runner](https://github.com/Anprionsa/infinity-mod-runner).
 
 ## What This Repo Does
 
-This repository collects **anonymized install reports** from EET Mod Runner and Forge users. A weekly GitHub Action aggregates reports into static JSON files that Forge uses to display community-sourced compatibility data.
+This repository collects **anonymized install reports** from Infinity Mod Runner and Forge users. A weekly GitHub Action aggregates reports into static JSON files that Forge uses to display community-sourced compatibility data.
 
 ## Privacy
 
@@ -18,11 +20,11 @@ Every report is submitted as a GitHub Issue — you can see exactly what's share
 
 ## How It Works
 
-1. **EET Mod Runner** generates an install report after each install
+1. **Infinity Mod Runner** generates an install report after each install
 2. User clicks "Share Report on GitHub" — opens a pre-filled GitHub Issue
 3. User reviews the data and clicks Submit
 4. A weekly GitHub Action aggregates all reports into `data/aggregate.json`
-5. EET Mod Forge fetches this data to show stability indicators and community-reported issues
+5. Infinity Mod Forge fetches this data to show stability indicators and community-reported issues
 
 ## Community Builds
 
@@ -41,4 +43,4 @@ See [SCHEMA.md](SCHEMA.md) for the full install report schema (v1).
 
 ## Contributing
 
-The best way to contribute is to use EET Mod Runner and opt in to sharing install reports. Every report helps improve mod compatibility data for the entire community.
+The best way to contribute is to use Infinity Mod Runner and opt in to sharing install reports. Every report helps improve mod compatibility data for the entire community.

@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 
 import requests
 
-REPO = "Anprionsa/eet-mod-telemetry"
+REPO = "Anprionsa/infinity-mod-telemetry"
 API = "https://api.github.com"
 MIN_REPORTS = 5  # Minimum reports before publishing per-component stats
 MIN_CO_INSTALLS = 5  # Minimum co-installs for pair failure data
@@ -302,37 +302,103 @@ def aggregate_reports():
         close_issue(
             issue_num,
             "This issue could not be parsed as a valid install report (schema validation failed). "
-            "Please submit reports via EET Mod Runner's 'Share Report on GitHub' button."
+            "Please submit reports via Infinity Mod Runner's 'Share Report on GitHub' button."
         )
     if invalid_issues:
         print(f"Closed {len(invalid_issues)} invalid issues")
 
 
+def _parse_version(v):
+    """Parse a semver-ish version like '1.2.3' into a tuple for comparison.
+    Unknown/missing versions sort lowest. Extra segments are kept for stability."""
+    if not v or not isinstance(v, str):
+        return (0, 0, 0)
+    parts = []
+    for p in v.split(".", 3):
+        try:
+            parts.append(int(p))
+        except ValueError:
+            # Strip non-numeric suffix (e.g., "1.0.0-beta" -> 0 for that segment)
+            digits = "".join(c for c in p if c.isdigit())
+            parts.append(int(digits) if digits else 0)
+    while len(parts) < 3:
+        parts.append(0)
+    return tuple(parts[:3])
+
+
 def aggregate_builds():
-    """Process approved community builds into data/builds.json."""
+    """Process approved community builds into data/builds/{id}.json.
+
+    Supports versioned updates:
+      - When multiple approved issues share an id, the one with the highest
+        `version` wins (tiebreak: newest `updatedAt`, then newest `createdAt`).
+      - Ownership check: if an existing build on disk has an `authorGitHub`,
+        incoming submissions for that id must have a matching `authorGitHub`
+        (set automatically from the issue's GitHub author). Non-matching
+        submissions are skipped to prevent build-id hijacking.
+      - First-time submissions auto-populate `authorGitHub` from the issue user.
+    """
     print("Fetching approved community-build issues...")
     # Fetch issues with BOTH labels: community-build AND approved
     all_build_issues = fetch_issues("community-build", state="all")
     approved = [
         issue for issue in all_build_issues
         if any(label.get("name") == "approved" for label in issue.get("labels", []))
+        and not any(label.get("name") == "yanked" for label in issue.get("labels", []))
         and "pull_request" not in issue
     ]
-    print(f"Found {len(approved)} approved community builds")
+    print(f"Found {len(approved)} approved (non-yanked) community builds")
 
-    builds = []
+    builds_dir = os.path.join(os.path.dirname(__file__), "..", "data", "builds")
+    os.makedirs(builds_dir, exist_ok=True)
+
+    # Load existing builds on disk so we can enforce ownership checks
+    existing_by_id = {}
+    for fname in os.listdir(builds_dir):
+        if not fname.endswith(".json") or fname.startswith("_"):
+            continue
+        try:
+            with open(os.path.join(builds_dir, fname), "r") as f:
+                b = json.load(f)
+            existing_by_id[b.get("id", fname[:-5])] = b
+        except (OSError, json.JSONDecodeError):
+            continue
+
+    # Collect candidate builds from issues, grouped by id
+    candidates_by_id = {}
     for issue in approved:
         data = extract_json_from_body(issue.get("body", ""))
         if not data or data.get("schema") != 1:
             continue
         if not isinstance(data.get("keys"), list) or not data.get("name"):
             continue
-        # Sanitize: ensure no unexpected fields leak through
-        builds.append({
-            "id": data.get("id", f"issue-{issue['number']}"),
+
+        bid = data.get("id", f"issue-{issue['number']}")
+        issue_author = (issue.get("user") or {}).get("login", "")
+        submitted_author_gh = data.get("authorGitHub") or issue_author
+
+        # Ownership check: incoming update must match original author's GitHub username.
+        # First-time submissions (no existing build) are always accepted.
+        existing = existing_by_id.get(bid)
+        if existing:
+            original_author = existing.get("authorGitHub")
+            if original_author and original_author.lower() != (submitted_author_gh or "").lower():
+                print(f"  SKIP issue #{issue['number']} for id='{bid}': author '{submitted_author_gh}' "
+                      f"does not match original '{original_author}'")
+                continue
+
+        # Sanitize: ensure no unexpected fields leak through.
+        # schemaVersion describes the key format: 1 = idx-based (legacy),
+        # 2 = wc-based (stable across mod updates). Default 1 when absent.
+        build = {
+            "id": bid,
+            "schema": 1,
+            "schemaVersion": data.get("schemaVersion", 1),
+            "version": data.get("version", "1.0.0"),
             "name": data["name"],
             "desc": data.get("desc", ""),
             "author": data.get("author", "Anonymous"),
+            "authorGitHub": submitted_author_gh,
             "icon": data.get("icon", ""),
             "color": data.get("color", "#a78bfa"),
             "keys": data["keys"],
@@ -343,13 +409,28 @@ def aggregate_builds():
             "componentCount": data.get("componentCount", len(data["keys"])),
             "forgeVersion": data.get("forgeVersion", "unknown"),
             "createdAt": data.get("createdAt", issue.get("created_at", "")),
+            "updatedAt": data.get("updatedAt", issue.get("updated_at", issue.get("created_at", ""))),
             "issueNumber": issue["number"],
-        })
+        }
+        candidates_by_id.setdefault(bid, []).append(build)
 
-    builds.sort(key=lambda b: b.get("createdAt", ""), reverse=True)
+    # For each id, pick the winning candidate (highest version, newest updatedAt, newest createdAt).
+    # This fixes the "older overwrites newer" bug from the single-pass write loop.
+    builds = []
+    for bid, group in candidates_by_id.items():
+        group.sort(key=lambda b: (
+            _parse_version(b.get("version", "0.0.0")),
+            b.get("updatedAt", ""),
+            b.get("createdAt", ""),
+        ), reverse=True)
+        winner = group[0]
+        builds.append(winner)
+        if len(group) > 1:
+            other_versions = [b["version"] for b in group[1:]]
+            print(f"  id='{bid}' version={winner['version']} wins over {other_versions}")
 
-    builds_dir = os.path.join(os.path.dirname(__file__), "..", "data", "builds")
-    os.makedirs(builds_dir, exist_ok=True)
+    # Sort final list for stable output ordering (newest updatedAt first)
+    builds.sort(key=lambda b: (b.get("updatedAt", ""), b.get("createdAt", "")), reverse=True)
 
     # Write individual build files for each approved issue-derived build
     issue_ids = set()

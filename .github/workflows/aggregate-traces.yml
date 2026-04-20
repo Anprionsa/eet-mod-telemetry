@@ -1,0 +1,39 @@
+name: Aggregate Install Traces
+
+# Separate workflow from aggregate.yml so trace runs can be triggered
+# independently and their run times don't cross-contaminate.
+#
+# Schedule is offset from the install-report aggregation by ~10 minutes to
+# avoid piling onto the GitHub Actions scheduler at the exact same moment.
+
+on:
+  schedule:
+    - cron: '27 6 * * 1'  # Weekly Monday 6:27 AM UTC
+  workflow_dispatch: {}
+
+jobs:
+  aggregate-traces:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - run: pip install requests
+
+      - name: Run trace aggregation
+        run: python scripts/aggregate_traces.py
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/install-traces-aggregate.json
+          git diff --cached --quiet || (git commit -m "Trace aggregation $(date -u +%Y-%m-%d)" && git push)
