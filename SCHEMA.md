@@ -102,3 +102,46 @@ Produced by the weekly workflow. Consumed by Forge's `scripts/apply_trace_aggreg
 | `heavyClass` | `"light" \| "medium" \| "heavy"` | Derived from `baselineSec` |
 | `sampleCount` | `number` | Cumulative samples backing this entry |
 | `updatedAt` | `string` | YYYY-MM-DD of the most recent update |
+
+---
+
+# Community Build Schema
+
+Community builds are stored as one file per build in `data/builds/<id>.json`, plus a lightweight `data/builds/_index.json` listing all builds (everything except the `keys` array) for fast browsing.
+
+## CommunityBuild
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `schema` | `1` | Container schema version |
+| `schemaVersion` | `1 \| 2` | Key format: 1 = idx-based (legacy, volatile on mod updates), 2 = wc-based (stable). New builds should be 2. |
+| `id` | `string` | Unique build identifier (UUID for first submission; reuse the same id to publish updates) |
+| `version` | `string` | Semver-ish (e.g. `"1.0.0"`, `"1.2.0"`). Aggregator picks highest version when multiple approved issues share an id. |
+| `name` | `string` | Display name |
+| `desc` | `string` | Description |
+| `author` | `string` | Display author name |
+| `authorGitHub` | `string` | GitHub username of the original author. Aggregator rejects updates from mismatched GitHub users. |
+| `icon` | `string` | Emoji or icon text |
+| `color` | `string` | Hex color for UI accent |
+| `keys` | `string[]` | Component selection. Format is `"modId-wc"` for schemaVersion 2. |
+| `tier` | `number \| null` | Difficulty tier (1=Beginner, 2=Intermediate, 3=Expert) |
+| `difficulty` | `string \| null` | Free-text difficulty label |
+| `focus` | `string[]` | Focus tags (e.g. `["story", "npc", "qol"]`) |
+| `modCount` | `number` | Unique mods in the build |
+| `componentCount` | `number` | Total components (== `keys.length`) |
+| `forgeVersion` | `string` | Forge app version at publish time |
+| `createdAt` | `string` | ISO timestamp of first submission |
+| `updatedAt` | `string` | ISO timestamp of most recent update |
+| `issueNumber` | `number` | GitHub issue number that produced this build |
+| `recommendedInstaller` | `string \| null` | Optional. Key of an installer defined in the Forge's `config.json` `installers` map (e.g. `"runner"`). Signals that cross-mod conflicts shown in the Forge are resolved by that installer's patch system. UI will surface a notice on the build card, detail modal, and conflict panel. |
+| `installNotes` | `string` | Optional free-text note shown in the detail modal (e.g. install caveats, known gotchas). |
+
+## Labels
+
+- `community-build` (auto, from issue template)
+- `approved` (required for aggregation)
+- `yanked` (removes a previously-approved version from the published index)
+
+## Update / ownership rules
+
+When multiple approved issues share an `id`, the aggregator picks the one with the highest `version` (tiebreak: newest `updatedAt`, then newest `createdAt`). Updates are only accepted if the new submission's `authorGitHub` matches the existing build's — preventing build-id hijacking.

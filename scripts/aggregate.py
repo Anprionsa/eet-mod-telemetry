@@ -411,6 +411,11 @@ def aggregate_builds():
             "createdAt": data.get("createdAt", issue.get("created_at", "")),
             "updatedAt": data.get("updatedAt", issue.get("updated_at", issue.get("created_at", ""))),
             "issueNumber": issue["number"],
+            # Optional: installer requirement. When set to an installer key (e.g. "runner"),
+            # the Forge shows a notice on the card/detail modal/conflict panel telling users
+            # which installer handles cross-mod conflicts for this build.
+            "recommendedInstaller": data.get("recommendedInstaller"),
+            "installNotes": data.get("installNotes", ""),
         }
         candidates_by_id.setdefault(bid, []).append(build)
 

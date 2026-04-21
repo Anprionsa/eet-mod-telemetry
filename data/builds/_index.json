@@ -17,14 +17,16 @@
       "class",
       "tweak"
     ],
-    "modCount": 414,
-    "componentCount": 1676,
+    "modCount": 413,
+    "componentCount": 1673,
     "forgeVersion": "2025.04",
     "createdAt": "2026-04-09T00:00:00Z",
     "schemaVersion": 2,
-    "version": "1.0.0",
-    "updatedAt": "2026-04-09T00:00:00Z",
-    "authorGitHub": "Anprionsa"
+    "version": "1.0.1",
+    "updatedAt": "2026-04-21T00:00:00Z",
+    "authorGitHub": "Anprionsa",
+    "recommendedInstaller": "runner",
+    "installNotes": "This build uses Infinity Mod Runner's patch system to resolve cross-mod conflicts that the Forge flags as hard conflicts (the scary red ones). Manual WeiDU install without those patches will likely fail or produce a broken install. Install via the Runner for a clean, tested result."
   },
   {
     "schema": 1,

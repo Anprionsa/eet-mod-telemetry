@@ -34,3 +34,7 @@ The aggregator will verify that the GitHub issue author matches the original bui
 - `version` — semver-ish string; higher version wins when the same id appears in multiple approved issues.
 - `authorGitHub` — required for updates; must match the GitHub issue author.
 - `schemaVersion: 2` — keys are WeiDU component numbers (stable across mod updates).
+- `recommendedInstaller` — optional. Set to `"runner"` to tell users that your build needs Infinity Mod Runner (e.g. because cross-mod conflicts are resolved by its patch system). The Forge displays a notice on the build card, detail modal, and conflict panel.
+- `installNotes` — optional free-text note shown alongside the recommended-installer notice (e.g. install-order caveats, known gotchas).
+
+See `SCHEMA.md` in this repo for the full field list.
